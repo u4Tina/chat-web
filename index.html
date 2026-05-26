@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -8,54 +9,75 @@
     <style>
         body { font-family: Arial, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
         #chat-container { width: 100%; max-width: 500px; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); padding: 20px; }
+        
+        /* 更新按鈕與選單的樣式區 */
+        .filter-group { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; background: #eef1f6; padding: 8px 12px; border-radius: 6px; }
+        .filter-group label { font-size: 14px; color: #444; }
+        .filter-group select { padding: 4px 8px; border-radius: 4px; border: 1px solid #ccc; }
+        .btn-update { background-color: #34a853; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; }
+        .btn-update:hover { background-color: #2d8e47; }
+
         #chat-box { height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; padding: 10px; margin-bottom: 15px; background: #fafafa; }
         .msg { margin-bottom: 10px; padding: 8px 12px; border-radius: 15px; width: fit-content; max-width: 80%; word-break: break-all; }
         .msg.other { background: #e4e6eb; align-self: flex-start; }
         .input-group { display: flex; gap: 10px; margin-bottom: 10px; }
         input, button { padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
         input[type="text"] { flex: 1; }
-        button { background-color: #0084ff; color: white; border: none; cursor: pointer; font-weight: bold; }
-        button:hover { background-color: #0068d0; }
+        .btn-send { background-color: #0084ff; color: white; border: none; cursor: pointer; font-weight: bold; }
+        .btn-send:hover { background-color: #0068d0; }
     </style>
 </head>
 <body>
 
 <div id="chat-container">
     <h2>💬 專屬即時群聊</h2>
+    
     <div class="input-group">
         <input type="text" id="username" placeholder="你的暱稱" value="神祕路人">
     </div>
+
+    <div class="filter-group">
+        <div>
+            <label for="days-select">載入歷史訊息：</label>
+            <select id="days-select">
+                <option value="1" selected>1 日內</option>
+                <option value="2">2 日內</option>
+                <option value="3">3 日內</option>
+                <option value="4">4 日內</option>
+                <option value="5">5 日內</option>
+                <option value="6">6 日內</option>
+                <option value="7">7 日內</option>
+                <option value="8">8 日內</option>
+                <option value="9">9 日內</option>
+                <option value="10">10 日內</option>
+            </select>
+        </div>
+        <button class="btn-update" onclick="loadHistoryMessages()">🔄 更新訊息</button>
+    </div>
+
     <div id="chat-box"></div>
+    
     <div class="input-group">
         <input type="text" id="message" placeholder="輸入訊息..." onkeypress="handleKeyPress(event)">
-        <button onclick="sendMessage()">送出</button>
+        <button class="btn-send" onclick="sendMessage()">送出</button>
     </div>
 </div>
 
 <script>
-    // ⚠️ 請替換成您自己在 Supabase 取得的資訊
+    // ⚠️ 請記得替換成您自己在 Supabase 取得的資訊
     const SUPABASE_URL = 'https://hkplocvgkzyzlzhwouwd.supabase.co';
     const SUPABASE_KEY = 'sb_publishable_9NddIO_ReMctduWhfb5unA_Kk0fDioz';
 
-    // 初始化 Supabase 客戶端
-    const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     const chatBox = document.getElementById('chat-box');
 
-    // 1. 網頁載入時：抓取歷史訊息，並開啟即時監聽
+    // 1. 初始化網頁
     async function init() {
-        // 抓取過去最新的 50 條訊息
-        const { data: history, error } = await supabase
-            .from('messages')
-            .select('*')
-            .order('id', { ascending: true })
-            .limit(50);
-        
-        if (history) {
-            history.forEach(msg => appendMessage(msg.sender, msg.content));
-        }
+        // 預設載入 1 天內的訊息
+        await loadHistoryMessages();
 
-        // 開啟即時監聽：只要 messages 資料表有新資料 (INSERT)，立刻渲染到網頁上
-        supabase
+        // 開啟即時監聽（不受天數限制，只要當下有人發新訊息就會跳出來）
+        supabaseClient
             .channel('schema-db-changes')
             .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
                 appendMessage(payload.new.sender, payload.new.content);
@@ -63,37 +85,65 @@
             .subscribe();
     }
 
-    // 2. 發送訊息到 Supabase 資料庫
+    // 2. 💡 根據選擇的天數，重新載入歷史訊息的方法
+    async function loadHistoryMessages() {
+        // 取得使用者選了幾天
+        const days = parseInt(document.getElementById('days-select').value);
+        
+        // 計算出目標時間（例如：現在時間減去 N 天）
+        const targetDate = new Date();
+        targetDate.setDate(targetDate.getDate() - days);
+        const targetIsoString = targetDate.toISOString(); // 轉換為資料庫看得懂的格式
+
+        // 撈取資料前，先清空舊的對話畫面，避免畫面重複疊加
+        chatBox.innerHTML = '';
+
+        // 向 Supabase 查詢大於等於(gte)該時間點的資料
+        const { data: history, error } = await supabaseClient
+            .from('messages')
+            .select('*')
+            .gte('created_at', targetIsoString) 
+            .order('id', { ascending: true });
+        
+        if (error) {
+            console.error('更新歷史訊息失敗:', error);
+            return;
+        }
+
+        // 將符合天數範圍的訊息重新渲染上網頁
+        if (history) {
+            history.forEach(msg => appendMessage(msg.sender, msg.content));
+        }
+    }
+
+    // 3. 發送新訊息到 Supabase
     async function sendMessage() {
         const sender = document.getElementById('username').value.trim();
         const content = document.getElementById('message').value.trim();
 
         if (!sender || !content) return;
 
-        // 寫入資料庫（寫入後，Supabase 透過 Realtime 會自動推播給所有人，包含你自己）
-        const { error } = await supabase
+        const { error } = await supabaseClient
             .from('messages')
             .insert([{ sender: sender, content: content }]);
 
         if (error) {
             console.error('發送失敗:', error);
         } else {
-            document.getElementById('message').value = ''; // 清空輸入框
+            document.getElementById('message').value = '';
         }
     }
 
-    // 處理 Enter 鍵送出
     function handleKeyPress(e) {
         if (e.key === 'Enter') sendMessage();
     }
 
-    // 將訊息渲染到聊天視窗上
     function appendMessage(sender, content) {
         const msgDiv = document.createElement('div');
         msgDiv.classList.add('msg', 'other');
         msgDiv.innerHTML = `<strong>${sender}</strong>: ${content}`;
         chatBox.appendChild(msgDiv);
-        chatBox.scrollTop = chatBox.scrollHeight; // 自動滾動到最下方
+        chatBox.scrollTop = chatBox.scrollHeight;
     }
 
     // 啟動
