@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我們的專屬群聊</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f0f2f5; margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        #chat-container { width: 100%; max-width: 500px; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); padding: 20px; }
+        #chat-box { height: 400px; overflow-y: auto; border: 1px solid #ddd; border-radius: 4px; padding: 10px; margin-bottom: 15px; background: #fafafa; }
+        .msg { margin-bottom: 10px; padding: 8px 12px; border-radius: 15px; width: fit-content; max-width: 80%; word-break: break-all; }
+        .msg.other { background: #e4e6eb; align-self: flex-start; }
+        .input-group { display: flex; gap: 10px; margin-bottom: 10px; }
+        input, button { padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+        input[type="text"] { flex: 1; }
+        button { background-color: #0084ff; color: white; border: none; cursor: pointer; font-weight: bold; }
+        button:hover { background-color: #0068d0; }
+    </style>
+</head>
+<body>
+
+<div id="chat-container">
+    <h2>💬 專屬即時群聊</h2>
+    <div class="input-group">
+        <input type="text" id="username" placeholder="你的暱稱" value="神祕路人">
+    </div>
+    <div id="chat-box"></div>
+    <div class="input-group">
+        <input type="text" id="message" placeholder="輸入訊息..." onkeypress="handleKeyPress(event)">
+        <button onclick="sendMessage()">送出</button>
+    </div>
+</div>
+
+<script>
+    // ⚠️ 請替換成您自己在 Supabase 取得的資訊
+    const SUPABASE_URL = 'https://hkplocvgkzyzlzhwouwd.supabase.co';
+    const SUPABASE_KEY = 'sb_publishable_9NddIO_ReMctduWhfb5unA_Kk0fDioz';
+
+    // 初始化 Supabase 客戶端
+    const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    const chatBox = document.getElementById('chat-box');
+
+    // 1. 網頁載入時：抓取歷史訊息，並開啟即時監聽
+    async function init() {
+        // 抓取過去最新的 50 條訊息
+        const { data: history, error } = await supabase
+            .from('messages')
+            .select('*')
+            .order('id', { ascending: true })
+            .limit(50);
+        
+        if (history) {
+            history.forEach(msg => appendMessage(msg.sender, msg.content));
+        }
+
+        // 開啟即時監聽：只要 messages 資料表有新資料 (INSERT)，立刻渲染到網頁上
+        supabase
+            .channel('schema-db-changes')
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+                appendMessage(payload.new.sender, payload.new.content);
+            })
+            .subscribe();
+    }
+
+    // 2. 發送訊息到 Supabase 資料庫
+    async function sendMessage() {
+        const sender = document.getElementById('username').value.trim();
+        const content = document.getElementById('message').value.trim();
+
+        if (!sender || !content) return;
+
+        // 寫入資料庫（寫入後，Supabase 透過 Realtime 會自動推播給所有人，包含你自己）
+        const { error } = await supabase
+            .from('messages')
+            .insert([{ sender: sender, content: content }]);
+
+        if (error) {
+            console.error('發送失敗:', error);
+        } else {
+            document.getElementById('message').value = ''; // 清空輸入框
+        }
+    }
+
+    // 處理 Enter 鍵送出
+    function handleKeyPress(e) {
+        if (e.key === 'Enter') sendMessage();
+    }
+
+    // 將訊息渲染到聊天視窗上
+    function appendMessage(sender, content) {
+        const msgDiv = document.createElement('div');
+        msgDiv.classList.add('msg', 'other');
+        msgDiv.innerHTML = `<strong>${sender}</strong>: ${content}`;
+        chatBox.appendChild(msgDiv);
+        chatBox.scrollTop = chatBox.scrollHeight; // 自動滾動到最下方
+    }
+
+    // 啟動
+    init();
+</script>
+</body>
+</html>
